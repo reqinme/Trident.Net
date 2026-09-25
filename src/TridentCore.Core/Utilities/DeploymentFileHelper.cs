@@ -48,10 +48,22 @@ public static class DeploymentFileHelper
         || name.Equals("Thumbs.db", StringComparison.OrdinalIgnoreCase)
         || name.Equals("desktop.ini", StringComparison.OrdinalIgnoreCase);
 
+    // NOTE: A projection is a symbolic link or junction (a reparse point, so the OS reports its
+    //  target) or a hard link (the same content under a second name, which the OS reports only as a
+    //  link count). Both are disposable: removing one drops a directory entry and never destroys
+    //  content, because the cache or the persistence directory keeps its own name for the file.
+    //  Source directories must not be tested this way - a cached file that a projection hard links
+    //  to legitimately has more than one name, and EnumerateFilesWithoutLinks has to keep treating
+    //  that as an ordinary file.
+    public static bool IsProjectionEntry(string path) =>
+        LinkTarget(path) is not null || ProjectionLinkHelper.IsHardLink(path);
+
     public static bool LinkMatches(string path, string target)
     {
         var current = LinkTarget(path);
-        return current is not null && FileHelper.IsPathEquivalent(Path.GetFullPath(current, Path.GetDirectoryName(path)!), target);
+        if (current is not null)
+            return FileHelper.IsPathEquivalent(Path.GetFullPath(current, Path.GetDirectoryName(path)!), target);
+        return ProjectionLinkHelper.SharesContent(path, target);
     }
 
     public static bool HasLinkAtOrAbove(string path, string root)
@@ -59,10 +71,10 @@ public static class DeploymentFileHelper
         var current = path;
         while (!FileHelper.IsPathEquivalent(current, root))
         {
-            if (LinkTarget(current) is not null) return true;
+            if (IsProjectionEntry(current)) return true;
             current = Path.GetDirectoryName(current) ?? throw new InvalidDataException($"Path escapes managed root: {path}");
         }
-        return LinkTarget(root) is not null;
+        return IsProjectionEntry(root);
     }
 
     public static IEnumerable<string> EnumerateFilesWithoutLinks(string root)
@@ -102,7 +114,7 @@ public static class DeploymentFileHelper
 
     public static bool DeleteLink(string path)
     {
-        if (LinkTarget(path) is null) return false;
+        if (!IsProjectionEntry(path)) return false;
         if ((File.GetAttributes(path) & FileAttributes.Directory) != 0) Directory.Delete(path, false);
         else File.Delete(path);
         return true;
@@ -116,7 +128,7 @@ public static class DeploymentFileHelper
         if (!Directory.Exists(path)) return true;
         foreach (var entry in new DirectoryInfo(path).EnumerateFileSystemInfos())
         {
-            if (entry.LinkTarget is not null) continue;
+            if (IsProjectionEntry(entry.FullName)) continue;
             if (entry is DirectoryInfo directory)
             {
                 if (!DirectoryContainsOnlyLinksEmptyDirectoriesOrFiles(directory.FullName, allowedFiles)) return false;
@@ -156,7 +168,7 @@ public static class DeploymentFileHelper
             token.ThrowIfCancellationRequested();
             foreach (var entry in new DirectoryInfo(directory).EnumerateFileSystemInfos())
             {
-                if (entry.LinkTarget is not null)
+                if (IsProjectionEntry(entry.FullName))
                     yield return (entry.FullName, (entry.Attributes & FileAttributes.Directory) != 0);
                 else if (entry is DirectoryInfo) pending.Push(entry.FullName);
             }
@@ -180,7 +192,7 @@ public static class DeploymentFileHelper
         if (!Directory.Exists(path)) return true;
         foreach (var entry in new DirectoryInfo(path).EnumerateFileSystemInfos())
         {
-            if (entry.LinkTarget is not null)
+            if (IsProjectionEntry(entry.FullName))
             {
                 DeleteLink(entry.FullName);
                 continue;

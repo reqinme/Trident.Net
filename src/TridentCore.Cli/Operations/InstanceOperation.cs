@@ -256,6 +256,10 @@ internal static class InstanceOperation
             return;
         }
 
+        // A recursive delete refuses to walk a reparse point, so projections inside a run
+        // directory must be dropped through the link-aware helper first. Removing a link only
+        // drops its directory entry and never touches the cache or the persistence directory.
+        DeploymentFileHelper.DeleteAllLinks(path, CancellationToken.None);
         Directory.Delete(path, true);
         deleted.Add(path);
     }

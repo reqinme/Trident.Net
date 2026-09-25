@@ -155,8 +155,7 @@ public class ExecuteDeploymentStage(IHttpClientFactory factory) : StageBase
         if (File.Exists(operation.Path)) throw BuildArtifactConflictException.Occupied(operation.Path);
         if (Directory.Exists(operation.Path)
             && !DeploymentFileHelper.DeleteDirectoryTreeIfEmptyOrLinks(operation.Path, build)) throw BuildArtifactConflictException.Occupied(operation.Path);
-        if (operation.Directory) Directory.CreateSymbolicLink(operation.Path, operation.Target);
-        else File.CreateSymbolicLink(operation.Path, operation.Target);
+        ProjectionLinkHelper.Create(operation.Path, operation.Target, operation.Directory);
     }
 
     private static async Task WriteAllowedSymlinksAsync(string build, string persist, CancellationToken token)
