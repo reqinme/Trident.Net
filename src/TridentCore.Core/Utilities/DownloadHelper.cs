@@ -7,10 +7,38 @@ public static class DownloadHelper
     public static async Task DownloadAsync(HttpClient client, Uri url, string path, FileHash? hash, CancellationToken token)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        // Candidates are ordered mirror-first; the origin stays as the fallback so a mirror outage,
+        // a rate limit, or a redirect target that rejects the request cannot break a deployment.
+        var candidates = DownloadMirrorHelper.Candidates(url);
+        Exception? failure = null;
+        foreach (var candidate in candidates)
+        {
+            try
+            {
+                await TransferAsync(client, candidate, path, hash, token).ConfigureAwait(false);
+                return;
+            }
+            catch (Exception exception) when (!token.IsCancellationRequested)
+            {
+                failure = exception;
+            }
+        }
+        throw failure!;
+    }
+
+    private static async Task TransferAsync(HttpClient client, Uri url, string path, FileHash? hash, CancellationToken token)
+    {
         var temporary = path + ".downloading-" + Guid.NewGuid().ToString("N");
         try
         {
-            await using (var input = await client.GetStreamAsync(url, token).ConfigureAwait(false))
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            if (DownloadMirrorHelper.IsMirrored(url))
+                request.Headers.UserAgent.ParseAdd(DownloadMirrorHelper.UserAgent);
+            using var response = await client
+                                      .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token)
+                                      .ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+            await using (var input = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false))
             await using (var output = File.Create(temporary))
                 await input.CopyToAsync(output, token).ConfigureAwait(false);
             if (!FileHelper.VerifyModified(temporary, null, hash))
