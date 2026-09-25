@@ -21,7 +21,7 @@ public class ExecuteDeploymentStage(IHttpClientFactory factory) : StageBase
         await Parallel.ForEachAsync(plan.Downloads, new ParallelOptions
         {
             CancellationToken = token,
-            MaxDegreeOfParallelism = Math.Max(Environment.ProcessorCount - 1, 1)
+            MaxDegreeOfParallelism = DownloadPolicyHelper.Parallelism
         }, async (download, ct) =>
         {
             await DownloadHelper.DownloadAsync(client, download.Url, download.Path, download.Hash, ct).ConfigureAwait(false);
